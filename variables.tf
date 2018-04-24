@@ -27,15 +27,15 @@ variable "bastion_service_host_key_name" {
   description = "AWS ssh key *.pem to be used for ssh access to the bastion service host"
 }
 
-variable "subnets_elb" {
+variable "subnets_nlb" {
   type        = "list"
-  description = "list of subnets for load balancer"
+  description = "list of subnets for load balancer - typically this will be public subnets"
   default     = []
 }
 
 variable "subnets_asg" {
   type        = "list"
-  description = "list of subnets for autoscaling group"
+  description = "list of subnets for autoscaling group - typically this will be private subnets"
   default     = []
 }
 
@@ -51,44 +51,44 @@ variable "iam_authorized_keys_command_url" {
   description = "location for our compiled Go binary - see https://github.com/Fullscreen/iam-authorized-keys-command"
 }
 
-variable "create_iam_service_role" {
-  type        = "string"
-  description = "Whether or not we call the iam_service_role module to create the bastion)servce_role (Boolean value)"
-  default     = "1"
-}
+# variable "create_iam_service_role" {
+#   type        = "string"
+#   description = "Whether or not we call the iam_service_role module to create the bastion)servce_role (Boolean value)"
+#   default     = "1"
+# }
 
 variable "s3_bucket_name" {
   description = "the name of the s3 bucket where we are storing our go binary"
 }
 
 ##############################
-#ELB ASG variables
+#nlb ASG variables
 ##############################
-variable "elb_healthy_threshold" {
+variable "nlb_healthy_threshold" {
   type        = "string"
-  description = "Healthy threshold for ELB"
+  description = "Healthy threshold for nlb"
   default     = "2"
 }
 
-variable "elb_unhealthy_threshold" {
+variable "nlb_unhealthy_threshold" {
   type        = "string"
-  description = "Unhealthy threshold for ELB"
+  description = "Unhealthy threshold for nlb"
   default     = "2"
 }
 
-variable "elb_timeout" {
+variable "nlb_timeout" {
   type        = "string"
-  description = "timeout for ELB"
+  description = "timeout for nlb"
   default     = "3"
 }
 
-variable "elb_interval" {
+variable "nlb_interval" {
   type        = "string"
-  description = "interval for ELB health check"
+  description = "interval for nlb health check"
   default     = "30"
 }
 
-variable "elb_idle_timeout" {
+variable "nlb_idle_timeout" {
   type        = "string"
   description = "The time in seconds that the connection is allowed to be idle"
   default     = "300"

@@ -17,9 +17,10 @@ data "aws_vpc" "main" {
 ##########################
 
 module "iam_service_role" {
-  source                  = "./iam_service_role"
-  s3_bucket_name          = "${var.s3_bucket_name}"
-  create_iam_service_role = "${var.create_iam_service_role}"
+  source         = "./iam_service_role"
+  s3_bucket_name = "${var.s3_bucket_name}"
+
+  # create_iam_service_role = "${var.create_iam_service_role}"
 }
 
 # ##################
@@ -38,7 +39,7 @@ resource "aws_security_group" "instance" {
     cidr_blocks = "${var.cidr_blocks_whitelist_service}"
   }
 
-  # SSH access from whitelist IP ranges - to be used for host sshd
+  # SSH access from whitelist IP ranges - to be used for host sshd - useful for debugging
   ingress {
     from_port   = 2222
     to_port     = 2222
@@ -46,14 +47,20 @@ resource "aws_security_group" "instance" {
     cidr_blocks = ["${var.cidr_blocks_whitelist_host}"]
   }
 
+  # SSH access fromrom anywhere within vpc to accomodate l - to be used for host sshd
+  ingress {
+    from_port   = 2222
+    to_port     = 2222
+    protocol    = "tcp"
+    cidr_blocks = ["${data.aws_vpc.main.cidr_block}"]
+  }
+
   # SSH access from anywhere within vpc to accomodate load balancer for sshd service containers 
   ingress {
-    from_port = 22
-    to_port   = 22
-    protocol  = "tcp"
-
-    # See https://fishingcatblog.wordpress.com/2016/09/22/terraform-interpolation-cidrsubnet/
-    cidr_blocks = ["${cidrsubnet(data.aws_vpc.main.cidr_block, 4, 1)}", "10.0.0.0/8", "172.16.0.0/12"]
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["${data.aws_vpc.main.cidr_block}"]
   }
 
   # Permissive egress policy because we want users to be able to install their own packages 
@@ -64,7 +71,7 @@ resource "aws_security_group" "instance" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  vpc_id = "${var.vpc}"
+  # vpc_id = "${var.vpc}"
 }
 
 ##########################
@@ -87,19 +94,18 @@ data "aws_ami" "debian" {
 ############################
 
 resource "aws_launch_configuration" "bastion-service-host" {
-  name_prefix                 = "bastion-service-host"
-  image_id                    = "${data.aws_ami.debian.id}"
-  instance_type               = "${var.bastion_instance_type}"
-  iam_instance_profile        = "bastion_service_profile"
-  associate_public_ip_address = "true"
+  name_prefix          = "bastion-service-host"
+  image_id             = "${data.aws_ami.debian.id}"
+  instance_type        = "${var.bastion_instance_type}"
+  iam_instance_profile = "bastion_service_profile"
+
+  # associate_public_ip_address = "false"
 
   #https://github.com/hashicorp/terraform/issues/575
   #https://github.com/hashicorp/terraform/commit/3b67537dfabc1a65eb17e92849da5e64737daae3
   security_groups = ["${aws_security_group.instance.id}"]
-
   user_data = "${data.template_file.bastion_host.rendered}"
   key_name  = "${var.bastion_service_host_key_name}"
-
   lifecycle {
     create_before_destroy = true
   }
@@ -110,14 +116,14 @@ resource "aws_launch_configuration" "bastion-service-host" {
 #######################################################
 
 resource "aws_autoscaling_group" "bastion-service-asg" {
-  availability_zones   = ["${data.aws_availability_zones.available.names}"]
+  # availability_zones   = ["${data.aws_availability_zones.available.names}"]
   name_prefix          = "bastion-service-asg"
   max_size             = "${var.asg_max}"
   min_size             = "${var.asg_min}"
   desired_capacity     = "${var.asg_desired}"
   launch_configuration = "${aws_launch_configuration.bastion-service-host.name}"
   vpc_zone_identifier  = ["${var.subnets_asg}"]
-  load_balancers       = ["${aws_elb.bastion-service-elb.name}"]
+  target_group_arns    = ["${aws_lb_target_group.bastion-service-target-group.arn}"]
 
   lifecycle {
     create_before_destroy = true
@@ -131,37 +137,48 @@ resource "aws_autoscaling_group" "bastion-service-asg" {
 }
 
 #######################################################
-# ELB section
+# Network load balancer section
 #######################################################
 
-resource "aws_elb" "bastion-service-elb" {
-  name = "bastion-service-elb"
+resource "aws_lb" "bastion-service-nlb" {
+  name               = "bastion-service-nlb"
+  load_balancer_type = "network"
+  subnets            = ["${var.subnets_nlb}"]
+  idle_timeout       = "${var.nlb_idle_timeout}"
+}
 
-  # Sadly can't use availabilty zones for classic load balancer - see https://github.com/terraform-providers/terraform-provider-aws/issues/1063
-  # availability_zones = ["${data.aws_availability_zones.available.names}"]
-  subnets = ["${var.subnets_elb}"]
+#######################
+#aws_lb_target_group
+#######################
+resource "aws_lb_target_group" "bastion-service-target-group" {
+  name     = "bastion-service-target-group"
+  port     = 22
+  protocol = "TCP"
+  vpc_id   = "${var.vpc}"
 
-  security_groups = ["${aws_security_group.instance.id}"]
+  # health_check {
+  #   healthy_threshold   = "${var.nlb_healthy_threshold}"
+  #   unhealthy_threshold = "${var.nlb_unhealthy_threshold}"
+  #   port                = 22
+  #   protocol            = "TCP"
 
-  listener {
-    instance_port     = 22
-    instance_protocol = "TCP"
-    lb_port           = 22
-    lb_protocol       = "TCP"
+  #   interval = "${var.nlb_interval}"
+  # }
+}
+
+#######################
+#aws_lb_listener
+#######################
+
+resource "aws_lb_listener" "bastion-service-listener" {
+  load_balancer_arn = "${aws_lb.bastion-service-nlb.arn}"
+  port              = "22"
+  protocol          = "TCP"
+
+  default_action {
+    target_group_arn = "${aws_lb_target_group.bastion-service-target-group.arn}"
+    type             = "forward"
   }
-
-  health_check {
-    healthy_threshold   = "${var.elb_healthy_threshold}"
-    unhealthy_threshold = "${var.elb_unhealthy_threshold}"
-    timeout             = "${var.elb_timeout}"
-    target              = "TCP:22"
-    interval            = "${var.elb_interval}"
-  }
-
-  cross_zone_load_balancing   = true
-  idle_timeout                = "${var.elb_idle_timeout}"
-  connection_draining         = true
-  connection_draining_timeout = 300
 }
 
 #######################
@@ -188,9 +205,9 @@ resource "aws_route53_record" "bastion_service" {
   type    = "A"
 
   alias {
-    name                   = "${aws_elb.bastion-service-elb.dns_name}"
-    zone_id                = "${aws_elb.bastion-service-elb.zone_id}"
-    evaluate_target_health = true
+    name                   = "${aws_lb.bastion-service-nlb.dns_name}"
+    zone_id                = "${aws_lb.bastion-service-nlb.zone_id}"
+    # evaluate_target_health = true
   }
 }
 
