@@ -46,7 +46,7 @@ data "aws_ami" "debian" {
 # # security group for bastion_host
 
 resource "aws_security_group" "instance" {
-  name        = "${var.environment_name}-${data.aws_region.current.name}-bastion"
+  name        = ["${var.environment_name}-${data.aws_region.current.name}-bastion"]
   description = "Allow ssh-host and ssh-bastion access to ${var.environment_name}-${data.aws_region.current.name}"
 
   # SSH access from whitelist IP ranges - to be used for sshd service containers
